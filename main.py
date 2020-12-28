@@ -3,6 +3,10 @@ from skimage.metrics import structural_similarity as ssim
 import pytesseract
 import os
 import numpy as np
+import glob
+from collections import OrderedDict
+import Levenshtein as lv
+import pprint
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +41,7 @@ def unsharp_mask(image, kernel_size=(5, 5), sigma=1.0, amount=5.0, threshold=0):
 
 def preprocess_image(image):
     """sharpens, removes noise and threshes an image"""
-    image = unsharp_mask(image)
+    # image = unsharp_mask(image)
     image = cv2.medianBlur(image, 3)
     image = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
     return image
@@ -79,15 +83,16 @@ def get_images_from_video(path):
 
 
 def process_lobby(image):
-    """Takes a meeting image and splits it into the names of the people in the lobby"""
+    """Takes a meeting image and splits it into the names of the people in the lobby
+    and then processes the image to extract text from it"""
     for i in COORDS:
         temp = image[i['y1']:i['y2'], i['x1']:i['x2']]
-        text = pytesseract.image_to_string(temp).strip()
+        temp = floodfill_invert_training(temp)
+        text = pytesseract.image_to_string(temp, config='--psm 8 -l mungus').strip()
         if text in RES:
             RES[text] += 1
         else:
             RES[text] = 1
-        check_images(temp)
 
 
 def check_images(image):
@@ -106,37 +111,49 @@ def check_images(image):
 
 
 def tesseract_test():
-    for i in range(60):
-        print(i)
-        img1 = cv2.imread(ROOT_DIR + '/images/training/{0}.png'.format(i))
-        text = pytesseract.image_to_string(img1, config='--psm 8').strip()
+    images = [cv2.imread(names) for names in glob.glob(ROOT_DIR + "/images/training/*.png")]
+    for image in images:
+        text = pytesseract.image_to_string(image, config='--psm 8 --oem 3 -l mungus').strip()
         if text in RES:
             RES[text] += 1
         else:
             RES[text] = 1
-    print(RES)
+    print(OrderedDict(sorted(RES.items(), key=lambda t: t[1])))
 
-def floodfill_invert_training(index):
+
+
+def floodfill_invert_training(img):
     """fills the background in black and inverts whole picture in grayscale"""
-    img = cv2.imread(ROOT_DIR + '/images/cropped{0}.png'.format(index))
-    height, width = img.shape[:-1]
+    height, width = img.shape
     mask1 = np.zeros((height + 2, width + 2), np.uint8)  # line 26
     img = cv2.floodFill(img, mask1, (0, 0), (0, 0, 0))[1]
     img = cv2.bitwise_not(img)
-    cv2.imwrite(ROOT_DIR + '/images/training/{0}.png'.format(index), img)
+    return img
 
 
 def main():
-    get_images_from_video("F:/Mungus Rips/20201016_772783968_Among Us.mp4")
-    print(RES)
-    # for i in range(71):
-    #     print(i)
-    #     floodfill_invert_training(i)
-    # tesseract_test()
+    get_images_from_video("F:/Mungus Rips/prox.mp4")
+    # print(OrderedDict(sorted(RES.items(), key=lambda t: t[1], reverse=True)))
+    # print(RES)
 
-    # img1 = cv2.imread(ROOT_DIR + '/images/training/{0}.png'.format(1))
-    # text = pytesseract.image_to_string(img1, config='--psm 8')
-    # print(text.strip())
+    temp = []
+    res = {}
+    for name in list(RES.keys()):
+        for i in temp:
+            if all(lv.ratio(name, j) > 0.70 for j in i):
+                i.append(name)
+                break
+        else:
+            temp.append([name, ])
+
+    for grp in temp:
+        res[tuple(grp)] = 0
+        for name in grp:
+            res[tuple(grp)] += RES[name]
+
+    pprint.pprint(dict(sorted(res.items(), key=lambda item: item[1], reverse=True)))
+
+
 
 if __name__ == "__main__":
     main()
